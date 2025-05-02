@@ -1,5 +1,5 @@
 import numpy as np
-from games import TicTacToe, GameSimulator
+from games import GameSimulator, GridEnv
 from neural import NNM
 from mcts import Node, UMCTS
 from typing import List, Optional
@@ -63,7 +63,7 @@ class EpisodeBuffer:
             # choose an episode
             episode = np.random.choice(self.buffer)
             # choose a starting state
-            start_idx = np.random.choice(len(episode.real_game_states) - window)
+            start_idx = np.random.choice(len(episode.real_game_states))
             # choose a window of states
             end_idx = start_idx + window + 1
 
@@ -88,6 +88,7 @@ class EpisodeBuffer:
                     # uniform distribution for the policy
                     target_policies.append(np.ones(episode.policies[0].shape) / episode.policies[0].shape[0])
                     actions.append(np.random.choice(episode.policies[0].shape[0]))
+                    break
             # remove last action and reward
             # these will not be evaluated in the loss function
             target_rewards.pop(-1)
@@ -105,7 +106,7 @@ class EpisodeBuffer:
 class RLM:
     def __init__(self, gm: GameSimulator = None, nnm: NNM = None):
         self.episode_buffer = EpisodeBuffer(capacity=512)
-        self.gm = gm if gm else TicTacToe()
+        self.gm = gm if gm else GridEnv()
         self.nnm = nnm if nnm else NNM(self.gm.get_observation().flatten().shape[0], self.gm.get_action_space_size())
         self.umcts = UMCTS(self.nnm, self.gm)
 
@@ -117,6 +118,7 @@ class RLM:
         self.batch_size = configs.batch_size
         self.save_interval = configs.save_interval
         self.sample_window = configs.sample_window
+        self.losses = []
 
     def episode_loop(self) -> None:
         """
@@ -125,15 +127,15 @@ class RLM:
         Args:
             num_episodes: The number of episodes to run.
         """
-        print(f"Episode 1/{self.num_episodes}")
         self.episode_buffer.clear()
         for episode in range(self.num_episodes):
             with torch.no_grad():
                 self.run_episode()
             if (episode + 1) % self.train_interval == 0:
                 print(f"Episode {episode + 1}/{self.num_episodes}")
-                self.nnm.train_networks(self.episode_buffer, self.batch_size, sample_window=self.sample_window)
-            
+                avg_loss = self.nnm.train_networks(self.episode_buffer, self.batch_size, sample_window=self.sample_window)
+                self.losses.append(avg_loss)
+
             if (episode + 1) % self.save_interval == 0:
                 self.nnm.save_model(f".\\models\\model_{episode + 1}.pth")
 
@@ -143,9 +145,8 @@ class RLM:
         """
         epidata = EpisodeData()
         # get real state
-        real_game_state = self.gm.reset()
+        real_game_state = self.gm.get_observation() # reset ?
         epidata.real_game_states.append(real_game_state)
-
         for move in range(self.max_moves):
             # get abstract_state
             abstract_state = self.nnm.representation(real_game_state)
@@ -153,9 +154,7 @@ class RLM:
             root = Node(abstract_state=abstract_state)
             legal_actions = self.gm.get_legal_actions()
             self.umcts.expand_node(root, legal_actions)
-            # run u-MCTS search
-            self.umcts.search(root, self.num_simulations, to_play=self.gm.player)
-            # get visit counts distribution
+            self.umcts.search(root, self.num_simulations)
             policy = self.umcts.get_policy(root)
             
             policy_for_all_actions = np.zeros(self.gm.get_action_space_size())
@@ -163,38 +162,14 @@ class RLM:
 
             epidata.values.append(root.Q.item())
             epidata.policies.append(policy_for_all_actions)
-
             # sample action from visit counts distribution
             action_idx = np.random.choice(len(policy), p=policy)
             action = legal_actions[action_idx]
-
             # take action in the game
             real_game_state, reward, terminal = self.gm.step(action)
-
             epidata.actions.append(action)
             epidata.rewards.append(reward)
             epidata.real_game_states.append(real_game_state)
             if terminal:
                 break
-        
         self.episode_buffer.store(epidata)
-
-    def get_actor_move(self, real_game_state: np.ndarray, legal_actions) -> int:
-        """
-        Get the action to take in the game using the actor network.
-        
-        Args:
-            real_game_state: The current state of the game.
-        
-        Returns:
-            The action to take in the game.
-        """
-        with torch.no_grad():
-            abstract_state = self.nnm.representation(real_game_state)
-            root = Node(abstract_state=abstract_state)
-            self.umcts.expand_node(root, legal_actions)
-            self.umcts.search(root, self.num_simulations)
-            policy = self.umcts.get_policy(root)
-            action_idx = np.random.choice(len(policy), p=policy)
-            action = legal_actions[action_idx]
-        return action

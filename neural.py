@@ -125,7 +125,9 @@ class NNM:
             losses['value_loss'].append(v_l)
             losses['policy_loss'].append(p_l)
             losses['reward_loss'].append(r_l)
+        avg_loss = ([np.mean(losses['value_loss']), np.mean(losses['policy_loss']), np.mean(losses['reward_loss'])])
         print(f"Value Loss: {np.mean(losses['value_loss'])}, Policy Loss: {np.mean(losses['policy_loss'])}, Reward Loss: {np.mean(losses['reward_loss'])}")
+        return avg_loss
 
     def bptt(self, real_game_states, actions, target_values, target_policies, target_rewards):
         """

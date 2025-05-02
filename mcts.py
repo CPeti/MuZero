@@ -18,7 +18,6 @@ class Node:
         """
         self.parent = parent
         self.action = action
-        self.to_play = 1
         self.children: List[Node] = []
         self.visits = 0
         self.value_sum = 0.0
@@ -55,7 +54,7 @@ class Node:
         """
         return self.Q + self.exp_bonus
     
-    def update_value_sum(self, rewards: List[float], gamma: float = 1.0, to_play: int = 1) -> None:
+    def update_value_sum(self, rewards: List[float], gamma: float = 1.0) -> None:
         """
         Update the value sum of the node based on the rewards and discount factor.
         
@@ -67,7 +66,7 @@ class Node:
         for i, r in enumerate(reversed(rewards)):
             total_reward += (gamma ** i) * r
 
-        self.value_sum += total_reward #if self.to_play == to_play else -total_reward
+        self.value_sum += total_reward
     
 
 
@@ -86,21 +85,17 @@ class UMCTS:
 
         # Config params
         self.discount = configs.discount
-        self.max_depth = configs.max_depth # TODO: does nothing for now
+        self.max_depth = configs.max_depth
 
-    def find_leaf(self, node: Node, to_play: int = 1) -> Tuple[Node, int]:
+    def find_leaf(self, node: Node) -> Node:
         """
         Find the leaf node of the given node.
         """
         depth = 0
         while node.children:
-            if node.to_play == to_play:
-                node = max(node.children, key=lambda n: n.Q + n.exp_bonus)
-            else:
-                node = min(node.children, key=lambda n: n.Q - n.exp_bonus)
-                raise NotImplementedError("Two player not implemented yet")
+            node = max(node.children, key=lambda n: n.Q + n.exp_bonus)
             depth += 1
-        return node, depth
+        return node
     
     def expand_node(self, node: Node, actions: List[int]) -> None:
         
@@ -115,12 +110,9 @@ class UMCTS:
             with torch.no_grad():
                 child_abstract_state, reward = self.nnm.dynamics(node.abstract_state, action)
             child_node = Node(parent=node, action=action, abstract_state=child_abstract_state, reward=reward)
-            if self.gm.two_player:
-                child_node.to_play = -node.to_play
-                raise NotImplementedError("Two player not implemented yet")
             node.children.append(child_node)
     
-    def backpropagate(self, node: Node, accum_reward: list, to_play: int = 1) -> None:
+    def backpropagate(self, node: Node, accum_reward: list) -> None:
         """
         Backpropagate the value from the leaf node to the root node.
         
@@ -130,15 +122,11 @@ class UMCTS:
         """
         while node is not None:
             node.visits += 1
-            node.update_value_sum(accum_reward, self.discount, to_play)
-            if node.to_play == to_play:
-                accum_reward.append(node.reward)
-            else:
-                accum_reward.append(-node.reward)
-                raise NotImplementedError("Two player not implemented yet")
+            node.update_value_sum(accum_reward, self.discount)
+            accum_reward.append(node.reward)
             node = node.parent
 
-    def search(self, root: Node, num_simulations: int, to_play: int = 1) -> None:
+    def search(self, root: Node, num_simulations: int) -> None:
         """
         Perform the MCTS search from the root node.
         
@@ -147,19 +135,14 @@ class UMCTS:
             num_simulations: The number of simulations to perform.
         """
         for _ in range(num_simulations):
-            leaf, depth = self.find_leaf(root, to_play=to_play)
-            v_to_play = leaf.to_play
-
+            leaf = self.find_leaf(root)
             actions = self.gm.get_all_actions()
             self.expand_node(leaf, actions)
             child = np.random.choice(leaf.children)
+            accum_reward = self.rollout(child)
+            self.backpropagate(child, accum_reward)
 
-            #rollout_depth = self.max_depth - depth
-            rollout_depth = 1
-            accum_reward = self.rollout(child, rollout_depth)
-            self.backpropagate(child, accum_reward, to_play=v_to_play)
-
-    def rollout(self, node: Node, depth: int) -> List[float]:
+    def rollout(self, node: Node, depth: int = 1) -> List[float]:
         with torch.no_grad():
             abstaract_state = node.abstract_state
             accum_reward = []

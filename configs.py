@@ -1,19 +1,19 @@
 from typing import List, Dict, Any, Tuple 
 
-num_episodes = 100000 # number of episodes to run
+num_episodes = 2000 # number of episodes to run
 max_moves = 15 # max moves per episode
-num_simulations = 200 # number of MCTS simulations per move
+num_simulations = 10 # number of MCTS simulations per move
 train_interval = 5
-batch_size = 64
+batch_size = 32
 save_interval = 1000
 sample_window = 8 # number of consecutive to sample from the episode buffer
 
 discount = 0.95
 max_depth = 15 # TODO: does nothing for now
 
-UCT_C = 1.412 # sqrt(2)
+UCT_C = 0.3 # exploration constant for UCT
 
-abstract_state_size: int = 8
+abstract_state_size: int = 5
 
 class RepresentationNetworkConfig:
     """
