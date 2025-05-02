@@ -1,0 +1,4 @@
+models/
+old_models/
+test.ipynb
+__pycache__/
